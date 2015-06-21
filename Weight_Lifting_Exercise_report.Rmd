@@ -1,0 +1,152 @@
+---
+title: "Weight Lifting Exercise"
+author: "A. Ghorbani"
+date: "June 21, 2015"
+output: html_document
+---
+
+# Abstract
+The goal of this work is to predict the manner a person doing the exercise. 
+The data came from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. 
+They were asked to perform barbell lifts correctly and incorrectly in 5 different ways which is attributed by letters A, B, C, D and E and stored in the `classe` variable in the data set. This report describes how the model is built to classify the performers way of doing the exercise based on the measurements.
+The data is taken from `http://groupware.les.inf.puc-rio.br/har`.
+
+# Loading data
+
+```{r warning=FALSE, message=FALSE}
+
+trainset.orig <- read.csv("pml-training.csv",na.strings = c("NA",""))
+testset.orig  <- read.csv("pml-testing.csv", na.strings = c("NA",""))
+
+set.seed(123)
+ 
+```
+
+# Clean up and feature selection
+
+I just first looked into the histogram of number of `NA`s for each column.
+```{r warning=FALSE, message=FALSE}
+
+num.of.nas <- sapply(trainset.orig, FUN = function(x)(sum(is.na(x))))
+
+hist(num.of.nas, main = "histogram of number of NAs for each column")
+
+```
+
+It can be seen that some of the variables have a high number of `NA`s.
+These variables will be removed from the training set.
+
+```{r warning=FALSE, message=FALSE}
+
+# index of columns that have number of NAs more that half of the number of rows.
+ind.nas <- num.of.nas > (nrow(trainset.orig)/2)
+
+#names(num.of.nas[ind.nas])
+
+```
+
+
+```{r warning=FALSE, message=FALSE}
+
+rm.vars <- c("X",
+             "user_name",
+             "raw_timestamp_part_1",
+             "raw_timestamp_part_2",
+             "cvtd_timestamp",
+             "new_window",
+             "num_window")
+col.names <- names(num.of.nas[!ind.nas])
+col.names <- col.names[!col.names %in% rm.vars]
+```
+
+Additionally variables: *`r rm.vars`* will also be removed from the training set.
+The reason is that variables that attributes to the performers of the exercise is not relevant here, as we want the model be general not person specific. Also correctness of an exercise is not time dependent, hence, the variables that related to time stamp should also be removed.
+
+Finally the variables that will be used for prediction are:
+
+```{r warning=FALSE, message=FALSE}
+col.names
+
+```
+
+In the following code the training set and test set are created.
+Only 10% of the data is selected of training set, because of the computation time (However, as we will see later even this will be enough to have 95% accuracy).
+
+```{r warning=FALSE, message=FALSE}
+require(caret)
+indx.train <- createDataPartition(trainset.orig$classe, p=0.1, list=F)
+
+trainset <- trainset.orig[indx.train,col.names]
+testset <- trainset.orig[-indx.train,col.names]
+
+final.testset <- testset.orig[,col.names[col.names %in% names(testset.orig)]]
+
+```
+
+Here also it is checked if there are any near zero variance variables, which the answer is no.
+
+```{r warning=FALSE, message=FALSE}
+require(caret)
+nzv <- nearZeroVar(trainset,saveMetrics = TRUE)
+nzv[nzv$nzv,]
+
+nzv <- nearZeroVar(trainset)
+
+if(length(nzv) > 0){
+  trainset <- trainset[,-nzv]
+  testset <- testset[,-nzv]
+}
+
+```
+
+# Training
+
+In order to create the model `random forest` classification method from `caret` package is used.
+The code will be running in parallel to speed up the calculations.
+
+```{r warning=FALSE, message=FALSE, cache=TRUE}
+require(doParallel)
+
+#run model in parallel
+cl <- makeCluster(detectCores())
+registerDoParallel(cl)
+model.rf <- train(classe ~ ., data=trainset, method="rf")
+stopCluster(cl)
+
+pred.rf <- predict(model.rf,testset)
+```
+
+The confusion matrix in the following show that we have obtained about 95% accuracy even using only 10% of the data.
+
+```{r warning=FALSE, message=FALSE, cache=TRUE}
+confusionMatrix(table(pred.rf,testset$classe))
+
+```
+
+NOTE: for `random forest` method cross validation is not required:
+
+> In random forests, there is no need for cross-validation or a separate test set to get an unbiased estimate   of the test set error. It is estimated internally, during the run ...
+>
+> -- <cite>https://www.stat.berkeley.edu/~breiman/RandomForests/cc_home.htm</cite>
+
+```{r warning=FALSE, message=FALSE, echo=F}
+
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+answers <- as.character(predict(model.rf,final.testset))
+pml_write_files(answers)
+```
+
+# Test data
+
+The prediction for the test data is as following
+
+```{r warning=FALSE, message=FALSE}
+require(knitr)
+kable(data.frame(problem.id=testset.orig$problem_id,prediction=answers))
+```
